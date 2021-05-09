@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include "byte_order.h"
+
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -395,202 +397,270 @@ static constexpr u32 DW_EH_PE_datarel = 0x30;
 static constexpr u32 DW_EH_PE_funcrel = 0x40;
 static constexpr u32 DW_EH_PE_aligned = 0x50;
 
-struct Elf64Sym {
+template <ByteOrder> struct Elf64Sym;
+
+template <> struct Elf64Sym<LITTLE> {
   bool is_defined() const { return !is_undef(); }
   bool is_undef() const { return st_shndx == SHN_UNDEF; }
   bool is_abs() const { return st_shndx == SHN_ABS; }
   bool is_common() const { return st_shndx == SHN_COMMON; }
 
-  u32 st_name;
+  u32_<LITTLE> st_name;
   u8 st_type : 4;
   u8 st_bind : 4;
   u8 st_visibility : 2;
-  u16 st_shndx;
-  u64 st_value;
-  u64 st_size;
+  u16_<LITTLE> st_shndx;
+  u64_<LITTLE> st_value;
+  u64_<LITTLE> st_size;
 };
 
-struct Elf32Sym {
+template <> struct Elf64Sym<BIG> {
   bool is_defined() const { return !is_undef(); }
   bool is_undef() const { return st_shndx == SHN_UNDEF; }
   bool is_abs() const { return st_shndx == SHN_ABS; }
   bool is_common() const { return st_shndx == SHN_COMMON; }
 
-  u32 st_name;
-  u32 st_value;
-  u32 st_size;
+  u32_<BIG> st_name;
+  u8 st_visibility : 2;
+  u8 st_bind : 4;
+  u8 st_type : 4;
+  u16_<BIG> st_shndx;
+  u64_<BIG> st_value;
+  u64_<BIG> st_size;
+};
+
+template <ByteOrder> struct Elf32Sym;
+
+template <> struct Elf32Sym<LITTLE> {
+  bool is_defined() const { return !is_undef(); }
+  bool is_undef() const { return st_shndx == SHN_UNDEF; }
+  bool is_abs() const { return st_shndx == SHN_ABS; }
+  bool is_common() const { return st_shndx == SHN_COMMON; }
+
+  u32_<LITTLE> st_name;
+  u32_<LITTLE> st_value;
+  u32_<LITTLE> st_size;
   u8 st_type : 4;
   u8 st_bind : 4;
   u8 st_visibility : 2;
-  u16 st_shndx;
+  u16_<LITTLE> st_shndx;
 };
 
+template <> struct Elf32Sym<BIG> {
+  bool is_defined() const { return !is_undef(); }
+  bool is_undef() const { return st_shndx == SHN_UNDEF; }
+  bool is_abs() const { return st_shndx == SHN_ABS; }
+  bool is_common() const { return st_shndx == SHN_COMMON; }
+
+  u32_<LITTLE> st_name;
+  u32_<LITTLE> st_value;
+  u32_<LITTLE> st_size;
+  u8 st_visibility : 2;
+  u8 st_bind : 4;
+  u8 st_type : 4;
+  u16_<LITTLE> st_shndx;
+};
+
+template <ByteOrder X>
 struct Elf64Shdr {
-  u32 sh_name;
-  u32 sh_type;
-  u64 sh_flags;
-  u64 sh_addr;
-  u64 sh_offset;
-  u64 sh_size;
-  u32 sh_link;
-  u32 sh_info;
-  u64 sh_addralign;
-  u64 sh_entsize;
+  u32_<X> sh_name;
+  u32_<X> sh_type;
+  u64_<X> sh_flags;
+  u64_<X> sh_addr;
+  u64_<X> sh_offset;
+  u64_<X> sh_size;
+  u32_<X> sh_link;
+  u32_<X> sh_info;
+  u64_<X> sh_addralign;
+  u64_<X> sh_entsize;
 };
 
+template <ByteOrder X>
 struct Elf32Shdr {
-  u32 sh_name;
-  u32 sh_type;
-  u32 sh_flags;
-  u32 sh_addr;
-  u32 sh_offset;
-  u32 sh_size;
-  u32 sh_link;
-  u32 sh_info;
-  u32 sh_addralign;
-  u32 sh_entsize;
+  u32_<X> sh_name;
+  u32_<X> sh_type;
+  u32_<X> sh_flags;
+  u32_<X> sh_addr;
+  u32_<X> sh_offset;
+  u32_<X> sh_size;
+  u32_<X> sh_link;
+  u32_<X> sh_info;
+  u32_<X> sh_addralign;
+  u32_<X> sh_entsize;
 };
 
+template <ByteOrder X>
 struct Elf64Ehdr {
   u8 e_ident[16];
-  u16 e_type;
-  u16 e_machine;
-  u32 e_version;
-  u64 e_entry;
-  u64 e_phoff;
-  u64 e_shoff;
-  u32 e_flags;
-  u16 e_ehsize;
-  u16 e_phentsize;
-  u16 e_phnum;
-  u16 e_shentsize;
-  u16 e_shnum;
-  u16 e_shstrndx;
+  u16_<X> e_type;
+  u16_<X> e_machine;
+  u32_<X> e_version;
+  u64_<X> e_entry;
+  u64_<X> e_phoff;
+  u64_<X> e_shoff;
+  u32_<X> e_flags;
+  u16_<X> e_ehsize;
+  u16_<X> e_phentsize;
+  u16_<X> e_phnum;
+  u16_<X> e_shentsize;
+  u16_<X> e_shnum;
+  u16_<X> e_shstrndx;
 };
 
+template <ByteOrder X>
 struct Elf32Ehdr {
   u8 e_ident[16];
-  u16 e_type;
-  u16 e_machine;
-  u32 e_version;
-  u32 e_entry;
-  u32 e_phoff;
-  u32 e_shoff;
-  u32 e_flags;
-  u16 e_ehsize;
-  u16 e_phentsize;
-  u16 e_phnum;
-  u16 e_shentsize;
-  u16 e_shnum;
-  u16 e_shstrndx;
+  u16_<X> e_type;
+  u16_<X> e_machine;
+  u32_<X> e_version;
+  u32_<X> e_entry;
+  u32_<X> e_phoff;
+  u32_<X> e_shoff;
+  u32_<X> e_flags;
+  u16_<X> e_ehsize;
+  u16_<X> e_phentsize;
+  u16_<X> e_phnum;
+  u16_<X> e_shentsize;
+  u16_<X> e_shnum;
+  u16_<X> e_shstrndx;
 };
 
+template <ByteOrder X>
 struct Elf64Phdr {
-  u32 p_type;
-  u32 p_flags;
-  u64 p_offset;
-  u64 p_vaddr;
-  u64 p_paddr;
-  u64 p_filesz;
-  u64 p_memsz;
-  u64 p_align;
+  u32_<X> p_type;
+  u32_<X> p_flags;
+  u64_<X> p_offset;
+  u64_<X> p_vaddr;
+  u64_<X> p_paddr;
+  u64_<X> p_filesz;
+  u64_<X> p_memsz;
+  u64_<X> p_align;
 };
 
+template <ByteOrder X>
 struct Elf32Phdr {
-  u32 p_type;
-  u32 p_offset;
-  u32 p_vaddr;
-  u32 p_paddr;
-  u32 p_filesz;
-  u32 p_memsz;
-  u32 p_flags;
-  u32 p_align;
+  u32_<X> p_type;
+  u32_<X> p_offset;
+  u32_<X> p_vaddr;
+  u32_<X> p_paddr;
+  u32_<X> p_filesz;
+  u32_<X> p_memsz;
+  u32_<X> p_flags;
+  u32_<X> p_align;
 };
 
+template <ByteOrder X>
 struct Elf64Rel {
-  u64 r_offset;
-  u32 r_type;
-  u32 r_sym;
+  u64_<X> r_offset;
+  u32_<X> r_type;
+  u32_<X> r_sym;
 };
 
-struct Elf32Rel {
-  u32 r_offset;
-  u32 r_type : 8;
-  u32 r_sym : 24;
+template <ByteOrder> struct Elf32Rel;
+
+template <> struct Elf32Rel<LITTLE> {
+  u32_<LITTLE> r_offset;
+  u8 r_type;
+  u24_<LITTLE> r_sym;
 };
 
+template <> struct Elf32Rel<BIG> {
+  u32_<BIG> r_offset;
+  u24_<BIG> r_sym;
+  u8 r_type;
+};
+
+template <ByteOrder X>
 struct Elf64Rela {
-  u64 r_offset;
-  u32 r_type;
-  u32 r_sym;
-  i64 r_addend;
+  u64_<X> r_offset;
+  u32_<X> r_type;
+  u32_<X> r_sym;
+  i64_<X> r_addend;
 };
 
-struct Elf32Rela {
-  u32 r_offset;
-  u32 r_type : 8;
-  u32 r_sym : 24;
-  i32 r_addend;
+template <ByteOrder> struct Elf32Rela;
+
+template <> struct Elf32Rela<LITTLE> {
+  u32_<LITTLE> r_offset;
+  u8 r_type;
+  u24_<LITTLE> r_sym;
+  i32_<LITTLE> r_addend;
 };
 
+template <> struct Elf32Rela<BIG> {
+  u32_<BIG> r_offset;
+  u24_<BIG> r_sym;
+  u8 r_type;
+  i32_<BIG> r_addend;
+};
+
+template <ByteOrder X>
 struct Elf64Dyn {
-  u64 d_tag;
-  u64 d_val;
+  u64_<X> d_tag;
+  u64_<X> d_val;
 };
 
+template <ByteOrder X>
 struct Elf32Dyn {
-  u32 d_tag;
-  u32 d_val;
+  u32_<X> d_tag;
+  u32_<X> d_val;
 };
 
+template <ByteOrder X>
 struct Elf64Verneed {
-  u16 vn_version;
-  u16 vn_cnt;
-  u32 vn_file;
-  u32 vn_aux;
-  u32 vn_next;
+  u16_<X> vn_version;
+  u16_<X> vn_cnt;
+  u32_<X> vn_file;
+  u32_<X> vn_aux;
+  u32_<X> vn_next;
 };
 
+template <ByteOrder X>
 struct Elf64Vernaux {
-  u32 vna_hash;
-  u16 vna_flags;
-  u16 vna_other;
-  u32 vna_name;
-  u32 vna_next;
+  u32_<X> vna_hash;
+  u16_<X> vna_flags;
+  u16_<X> vna_other;
+  u32_<X> vna_name;
+  u32_<X> vna_next;
 };
 
+template <ByteOrder X>
 struct Elf64Verdef {
-  u16 vd_version;
-  u16 vd_flags;
-  u16 vd_ndx;
-  u16 vd_cnt;
-  u32 vd_hash;
-  u32 vd_aux;
-  u32 vd_next;
+  u16_<X> vd_version;
+  u16_<X> vd_flags;
+  u16_<X> vd_ndx;
+  u16_<X> vd_cnt;
+  u32_<X> vd_hash;
+  u32_<X> vd_aux;
+  u32_<X> vd_next;
 };
 
+template <ByteOrder X>
 struct Elf64Verdaux {
-  u32 vda_name;
-  u32 vda_next;
+  u32_<X> vda_name;
+  u32_<X> vda_next;
 };
 
+template <ByteOrder X>
 struct Elf64Chdr {
-  u32 ch_type;
-  u32 ch_reserved;
-  u64 ch_size;
-  u64 ch_addralign;
+  u32_<X> ch_type;
+  u32_<X> ch_reserved;
+  u64_<X> ch_size;
+  u64_<X> ch_addralign;
 };
 
+template <ByteOrder X>
 struct Elf32Chdr {
-  u32 ch_type;
-  u32 ch_size;
-  u32 ch_addralign;
+  u32_<X> ch_type;
+  u32_<X> ch_size;
+  u32_<X> ch_addralign;
 };
 
+template <ByteOrder X>
 struct Elf64Nhdr {
-  u32 n_namesz;
-  u32 n_descsz;
-  u32 n_type;
+  u32_<X> n_namesz;
+  u32_<X> n_descsz;
+  u32_<X> n_type;
 };
 
 template <typename E> struct ElfSym;
@@ -619,6 +689,7 @@ struct X86_64 {
   static constexpr u32 R_DTPMOD = R_X86_64_DTPMOD64;
   static constexpr u32 R_TLSDESC = R_X86_64_TLSDESC;
 
+  static constexpr ByteOrder byte_order = LITTLE;
   static constexpr u32 wordsize = 8;
   static constexpr u32 rel_type = SHT_RELA;
   static constexpr u32 e_machine = EM_X86_64;
@@ -630,18 +701,18 @@ struct X86_64 {
   static constexpr bool is_le = true;
 };
 
-template <> struct ElfSym<X86_64> : public Elf64Sym {};
-template <> struct ElfShdr<X86_64> : public Elf64Shdr {};
-template <> struct ElfEhdr<X86_64> : public Elf64Ehdr {};
-template <> struct ElfPhdr<X86_64> : public Elf64Phdr {};
-template <> struct ElfRel<X86_64> : public Elf64Rela {};
-template <> struct ElfDyn<X86_64> : public Elf64Dyn {};
-template <> struct ElfVerneed<X86_64> : public Elf64Verneed {};
-template <> struct ElfVernaux<X86_64> : public Elf64Vernaux {};
-template <> struct ElfVerdef<X86_64> : public Elf64Verdef {};
-template <> struct ElfVerdaux<X86_64> : public Elf64Verdaux {};
-template <> struct ElfChdr<X86_64> : public Elf64Chdr {};
-template <> struct ElfNhdr<X86_64> : public Elf64Nhdr {};
+template <> struct ElfSym<X86_64> : public Elf64Sym<LITTLE> {};
+template <> struct ElfShdr<X86_64> : public Elf64Shdr<LITTLE> {};
+template <> struct ElfEhdr<X86_64> : public Elf64Ehdr<LITTLE> {};
+template <> struct ElfPhdr<X86_64> : public Elf64Phdr<LITTLE> {};
+template <> struct ElfRel<X86_64> : public Elf64Rela<LITTLE> {};
+template <> struct ElfDyn<X86_64> : public Elf64Dyn<LITTLE> {};
+template <> struct ElfVerneed<X86_64> : public Elf64Verneed<LITTLE> {};
+template <> struct ElfVernaux<X86_64> : public Elf64Vernaux<LITTLE> {};
+template <> struct ElfVerdef<X86_64> : public Elf64Verdef<LITTLE> {};
+template <> struct ElfVerdaux<X86_64> : public Elf64Verdaux<LITTLE> {};
+template <> struct ElfChdr<X86_64> : public Elf64Chdr<LITTLE> {};
+template <> struct ElfNhdr<X86_64> : public Elf64Nhdr<LITTLE> {};
 
 struct I386 {
   typedef u32 WordTy;
@@ -656,6 +727,7 @@ struct I386 {
   static constexpr u32 R_DTPMOD = R_386_TLS_DTPMOD32;
   static constexpr u32 R_TLSDESC = R_386_TLS_DESC;
 
+  static constexpr ByteOrder byte_order = LITTLE;
   static constexpr u32 wordsize = 4;
   static constexpr u32 rel_type = SHT_REL;
   static constexpr u32 e_machine = EM_386;
@@ -667,15 +739,15 @@ struct I386 {
   static constexpr bool is_le = true;
 };
 
-template <> struct ElfSym<I386> : public Elf32Sym {};
-template <> struct ElfShdr<I386> : public Elf32Shdr {};
-template <> struct ElfEhdr<I386> : public Elf32Ehdr {};
-template <> struct ElfPhdr<I386> : public Elf32Phdr {};
-template <> struct ElfRel<I386> : public Elf32Rel {};
-template <> struct ElfDyn<I386> : public Elf32Dyn {};
-template <> struct ElfVerneed<I386> : public Elf64Verneed {};
-template <> struct ElfVernaux<I386> : public Elf64Vernaux {};
-template <> struct ElfVerdef<I386> : public Elf64Verdef {};
-template <> struct ElfVerdaux<I386> : public Elf64Verdaux {};
-template <> struct ElfChdr<I386> : public Elf32Chdr {};
-template <> struct ElfNhdr<I386> : public Elf64Nhdr {};
+template <> struct ElfSym<I386> : public Elf32Sym<LITTLE> {};
+template <> struct ElfShdr<I386> : public Elf32Shdr<LITTLE> {};
+template <> struct ElfEhdr<I386> : public Elf32Ehdr<LITTLE> {};
+template <> struct ElfPhdr<I386> : public Elf32Phdr<LITTLE> {};
+template <> struct ElfRel<I386> : public Elf32Rel<LITTLE> {};
+template <> struct ElfDyn<I386> : public Elf32Dyn<LITTLE> {};
+template <> struct ElfVerneed<I386> : public Elf64Verneed<LITTLE> {};
+template <> struct ElfVernaux<I386> : public Elf64Vernaux<LITTLE> {};
+template <> struct ElfVerdef<I386> : public Elf64Verdef<LITTLE> {};
+template <> struct ElfVerdaux<I386> : public Elf64Verdaux<LITTLE> {};
+template <> struct ElfChdr<I386> : public Elf32Chdr<LITTLE> {};
+template <> struct ElfNhdr<I386> : public Elf64Nhdr<LITTLE> {};

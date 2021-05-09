@@ -55,7 +55,7 @@ mold: $(OBJS)
 mold-wrapper.so: mold-wrapper.c Makefile
 	cc -fPIC -shared -o $@ $< -ldl
 
-$(OBJS): mold.h elf.h Makefile
+$(OBJS): mold.h elf.h byte_order.h Makefile
 
 submodules:
 	$(MAKE) -C oneTBB

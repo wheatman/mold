@@ -107,7 +107,7 @@ std::vector<ElfPhdr<E>> create_phdr(Context<E> &ctx) {
     phdr.p_align = std::max<u64>(min_align, chunk->shdr.sh_addralign);
     phdr.p_offset = chunk->shdr.sh_offset;
     phdr.p_filesz =
-      (chunk->shdr.sh_type == SHT_NOBITS) ? 0 : chunk->shdr.sh_size;
+      (chunk->shdr.sh_type == SHT_NOBITS) ? 0 : (u64)chunk->shdr.sh_size;
     phdr.p_vaddr = chunk->shdr.sh_addr;
     phdr.p_memsz = chunk->shdr.sh_size;
   };
@@ -619,7 +619,7 @@ void OutputSection<E>::write_to(Context<E> &ctx, u8 *buf) {
     // Zero-clear trailing padding
     u64 this_end = isec.offset + isec.shdr.sh_size;
     u64 next_start = (i == members.size() - 1) ?
-      this->shdr.sh_size : members[i + 1]->offset;
+      (u64)this->shdr.sh_size : (u64)members[i + 1]->offset;
     memset(buf + this_end, 0, next_start - this_end);
   });
 }
@@ -699,15 +699,15 @@ i64 GotSection<E>::get_reldyn_size(Context<E> &ctx) const {
 }
 
 template <typename E>
-static ElfRel<E> reloc(u64 offset, u32 type, u32 sym, i64 addend);
+static ElfRel<E> reloc(u64 offset, u8 type, u32 sym, i64 addend);
 
 template <>
-ElfRel<X86_64> reloc<X86_64>(u64 offset, u32 type, u32 sym, i64 addend) {
+ElfRel<X86_64> reloc<X86_64>(u64 offset, u8 type, u32 sym, i64 addend) {
   return {offset, type, sym, addend};
 }
 
 template <>
-ElfRel<I386> reloc<I386>(u64 offset, u32 type, u32 sym, i64 addend) {
+ElfRel<I386> reloc<I386>(u64 offset, u8 type, u32 sym, i64 addend) {
   return {(u32)offset, type, sym};
 }
 
@@ -773,7 +773,7 @@ void GotPltSection<E>::copy_buf(Context<E> &ctx) {
   // The first slot of .got.plt points to _DYNAMIC, as requested by
   // the x86-64 psABI. The second and the third slots are reserved by
   // the psABI.
-  buf[0] = ctx.dynamic ? ctx.dynamic->shdr.sh_addr : 0;
+  buf[0] = ctx.dynamic ? (u64)ctx.dynamic->shdr.sh_addr : 0;
   buf[1] = 0;
   buf[2] = 0;
 
@@ -1150,7 +1150,7 @@ void MergedSection<E>::assign_offsets() {
   });
 
   this->shdr.sh_size = shard_offsets[NUM_SHARDS];
-  this->shdr.sh_addralign = max_alignment;
+  this->shdr.sh_addralign = max_alignment.load();
 
   static Counter merged_strings("merged_strings");
   for (std::span<SectionFragment<E> *> span : fragments)
@@ -1288,13 +1288,13 @@ void EhFrameHdrSection<E>::copy_buf(Context<E> &ctx) {
   base[2] = DW_EH_PE_udata4;
   base[3] = DW_EH_PE_datarel | DW_EH_PE_sdata4;
 
-  *(u32 *)(base + 4) = eh_frame_addr - this->shdr.sh_addr - 4;
-  *(u32 *)(base + 8) = num_fdes;
+  *(u32_<E::byte_order> *)(base + 4) = eh_frame_addr - this->shdr.sh_addr - 4;
+  *(u32_<E::byte_order> *)(base + 8) = num_fdes;
 
   // Fill contents
   struct Entry {
-    i32 init_addr;
-    i32 fde_addr;
+    i32_<E::byte_order> init_addr;
+    i32_<E::byte_order> fde_addr;
   };
 
   tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {

@@ -224,7 +224,7 @@ ObjectFile<E>::uncompress_contents(Context<E> &ctx, const ElfShdr<E> &shdr,
     ElfShdr<E> *shdr2 = new ElfShdr<E>;
     ctx.owning_shdrs.push_back(std::unique_ptr<ElfShdr<E>>(shdr2));
     *shdr2 = shdr;
-    shdr2->sh_flags &= ~(u64)(SHF_COMPRESSED);
+    shdr2->sh_flags &= ~(u32)SHF_COMPRESSED;
     shdr2->sh_size = hdr.ch_size;
     shdr2->sh_addralign = hdr.ch_addralign;
 
