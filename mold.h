@@ -2179,7 +2179,8 @@ inline i64 InputSection<I386>::get_addend(const ElfRel<I386> &rel) const {
   case R_386_TLS_GOTDESC:
     return *(u32 *)loc;
   }
-  assert(0 && "unreachable");
+  ASSERT(0 && "unreachable");
+  return 0;
 }
 
 template <>
