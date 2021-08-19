@@ -12,7 +12,7 @@ CPPFLAGS = -g -pthread -std=c++20 -fPIE \
            -DMOLD_VERSION=\"0.9.3\" \
            -DGIT_HASH=\"$(GIT_HASH)\" \
 	   $(EXTRA_CPPFLAGS)
-LDFLAGS += $(EXTRA_LDFLAGS)
+LDFLAGS += $(EXTRA_LDFLAGS) -rdynamic
 LIBS = -Wl,-as-needed -lcrypto -pthread -lz -lxxhash -ldl -lm
 OBJS = main.o object-file.o input-sections.o output-chunks.o \
        mapfile.o perf.o linker-script.o archive-file.o output-file.o \
