@@ -2,8 +2,8 @@
 
 #include <shared_mutex>
 #include <sys/mman.h>
-#include <tbb/parallel_for_each.h>
-#include <tbb/parallel_sort.h>
+#include <ParallelTools/parallel.h>
+#include <ParallelTools/sort.hpp>
 
 #ifdef __APPLE__
 #  define COMMON_DIGEST_FOR_OPENSSL
@@ -312,7 +312,7 @@ void RelDynSection<E>::sort(Context<E> &ctx) {
   ElfRel<E> *begin = (ElfRel<E> *)(ctx.buf + this->shdr.sh_offset);
   ElfRel<E> *end = (ElfRel<E> *)((u8 *)begin + this->shdr.sh_size);
 
-  tbb::parallel_sort(begin, end, [](const ElfRel<E> &a, const ElfRel<E> &b) {
+  ParallelTools::sort(begin, end, [](const ElfRel<E> &a, const ElfRel<E> &b) {
     return std::tuple(a.r_type != E::R_RELATIVE, a.r_sym, a.r_offset) <
            std::tuple(b.r_type != E::R_RELATIVE, b.r_sym, b.r_offset);
   });
@@ -425,7 +425,7 @@ void SymtabSection<E>::copy_buf(Context<E> &ctx) {
   memset(ctx.buf + this->shdr.sh_offset, 0, sizeof(ElfSym<E>));
   ctx.buf[ctx.strtab->shdr.sh_offset] = '\0';
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     file->write_symtab(ctx);
   });
 }
@@ -725,7 +725,7 @@ void OutputSection<E>::copy_buf(Context<E> &ctx) {
 
 template <typename E>
 void OutputSection<E>::write_to(Context<E> &ctx, u8 *buf) {
-  tbb::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
     // Copy section contents to an output file
     InputSection<E> &isec = *members[i];
     isec.write_to(ctx, buf + isec.offset);
@@ -942,16 +942,17 @@ void DynsymSection<E>::finalize(Context<E> &ctx) {
     std::vector<T> vec(num_globals);
     ctx.gnu_hash->num_buckets = num_globals / ctx.gnu_hash->LOAD_FACTOR + 1;
 
-    tbb::parallel_for((i64)0, num_globals, [&](i64 i) {
+    ParallelTools::parallel_for((i64)0, num_globals, [&](i64 i) {
       Symbol<E> *sym = symbols[global_offset + i];
       vec[i].sym = sym;
       vec[i].hash = djb_hash(sym->name()) % ctx.gnu_hash->num_buckets;
       vec[i].idx = i;
     });
 
-    tbb::parallel_sort(vec.begin(), vec.end(), [&](const T &a, const T &b) {
+  ParallelTools::sort(vec.begin(), vec.end(), [&](const T &a, const T &b) {
       return std::tuple(a.hash, a.idx) < std::tuple(b.hash, b.idx);
     });
+
 
     for (i64 i = 0; i < num_globals; i++)
       symbols[global_offset + i] = vec[i].sym;
@@ -1142,11 +1143,15 @@ MergedSection<E>::get_instance(Context<E> &ctx, std::string_view name,
   flags = flags & ~(u64)SHF_MERGE & ~(u64)SHF_STRINGS;
 
   auto find = [&]() -> MergedSection * {
-    for (std::unique_ptr<MergedSection<E>> &osec : ctx.merged_sections)
-      if (std::tuple(name, flags, type) ==
-          std::tuple(osec->name, osec->shdr.sh_flags, osec->shdr.sh_type))
-        return osec.get();
-    return nullptr;
+    return ctx.merged_sections.find_first_match(
+
+        [&](std::unique_ptr<MergedSection<E>> &osec) {
+          return std::tuple(name, flags, type) ==
+                 std::tuple(osec->name, osec->shdr.sh_flags,
+                            osec->shdr.sh_type);
+        },
+        [&](std::unique_ptr<MergedSection<E>> &osec) { return osec.get(); },
+        (MergedSection *)nullptr);
   };
 
   // Search for an exiting output section.
@@ -1163,7 +1168,7 @@ MergedSection<E>::get_instance(Context<E> &ctx, std::string_view name,
     return osec;
 
   auto *osec = new MergedSection(name, flags, type);
-  ctx.merged_sections.push_back(std::unique_ptr<MergedSection>(osec));
+  ctx.merged_sections.push_back(osec);
   return osec;
 }
 
@@ -1196,7 +1201,7 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
 
   i64 shard_size = map.nbuckets / map.NUM_SHARDS;
 
-  tbb::parallel_for((i64)0, map.NUM_SHARDS, [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, map.NUM_SHARDS, [&](i64 i) {
     struct KeyVal {
       std::string_view key;
       SectionFragment<E> *val;
@@ -1210,7 +1215,7 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
         fragments.push_back({{map.keys[j], map.sizes[j]}, &frag});
 
     // Sort fragments to make output deterministic.
-    tbb::parallel_sort(fragments.begin(), fragments.end(),
+    ParallelTools::sort(fragments.begin(), fragments.end(),
                        [](const KeyVal &a, const KeyVal &b) {
       if (a.val->alignment != b.val->alignment)
         return a.val->alignment < b.val->alignment;
@@ -1246,7 +1251,7 @@ void MergedSection<E>::assign_offsets(Context<E> &ctx) {
     shard_offsets[i] =
       align_to(shard_offsets[i - 1] + sizes[i - 1], alignment);
 
-  tbb::parallel_for((i64)1, map.NUM_SHARDS, [&](i64 i) {
+  ParallelTools::parallel_for((i64)1, map.NUM_SHARDS, [&](i64 i) {
     for (i64 j = shard_size * i; j < shard_size * (i + 1); j++)
       if (SectionFragment<E> &frag = map.values[j]; frag.is_alive)
         frag.offset += shard_offsets[i];
@@ -1265,7 +1270,7 @@ template <typename E>
 void MergedSection<E>::write_to(Context<E> &ctx, u8 *buf) {
   i64 shard_size = map.nbuckets / map.NUM_SHARDS;
 
-  tbb::parallel_for((i64)0, map.NUM_SHARDS, [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, map.NUM_SHARDS, [&](i64 i) {
     memset(buf + shard_offsets[i], 0, shard_offsets[i + 1] - shard_offsets[i]);
 
     for (i64 j = shard_size * i; j < shard_size * (i + 1); j++)
@@ -1278,7 +1283,7 @@ template <typename E>
 void EhFrameSection<E>::construct(Context<E> &ctx) {
   // Remove dead FDEs and assign them offsets within their corresponding
   // CIE group.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     erase(file->fdes, [](FdeRecord<E> &fde) { return !fde.is_alive; });
 
     i64 offset = 0;
@@ -1330,7 +1335,7 @@ template <typename E>
 void EhFrameSection<E>::copy_buf(Context<E> &ctx) {
   u8 *base = ctx.buf + this->shdr.sh_offset;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     // Copy CIEs.
     for (CieRecord<E> &cie : file->cies) {
       if (!cie.is_leader)
@@ -1403,7 +1408,7 @@ void EhFrameHdrSection<E>::copy_buf(Context<E> &ctx) {
     i32 fde_addr;
   };
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     Entry *entries = (Entry *)(base + HEADER_SIZE) + file->fde_idx;
 
     for (i64 i = 0; i < file->fdes.size(); i++) {
@@ -1423,7 +1428,7 @@ void EhFrameHdrSection<E>::copy_buf(Context<E> &ctx) {
   Entry *begin = (Entry *)(base + HEADER_SIZE);
   Entry *end = begin + num_fdes;
 
-  tbb::parallel_sort(begin, end, [](const Entry &a, const Entry &b) {
+  ParallelTools::sort(begin, end, [](const Entry &a, const Entry &b) {
     return a.init_addr < b.init_addr;
   });
 }
@@ -1647,7 +1652,7 @@ static void compute_sha256(Context<E> &ctx, i64 offset) {
   i64 num_shards = bufsize / shard_size + 1;
   std::vector<u8> shards(num_shards * SHA256_SIZE);
 
-  tbb::parallel_for((i64)0, num_shards, [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, num_shards, [&](i64 i) {
     u8 *begin = buf + shard_size * i;
     i64 sz = (i < num_shards - 1) ? shard_size : (bufsize % shard_size);
     SHA256(begin, sz, shards.data() + i * SHA256_SIZE);
@@ -1807,11 +1812,11 @@ void ReproSection<E>::update_shdr(Context<E> &ctx) {
   tar.append("version.txt", save_string(ctx, mold_version + "\n"));
 
   std::unordered_set<std::string> seen;
-  for (std::unique_ptr<MappedFile<Context<E>>> &mf : ctx.mf_pool) {
+  ctx.mf_pool.serial_for_each([&](std::unique_ptr<MappedFile<Context<E>>> &mf) {
     std::string path = path_to_absolute(mf->name);
     if (seen.insert(path).second)
       tar.append(path, mf->get_contents());
-  }
+  });
 
   std::vector<u8> buf(tar.size());
   tar.write_to(&buf[0]);

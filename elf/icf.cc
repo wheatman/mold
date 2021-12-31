@@ -55,12 +55,11 @@
 #include "mold.h"
 
 #include <array>
-#include <tbb/concurrent_unordered_map.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_for_each.h>
-#include <tbb/parallel_sort.h>
+#include <algorithm>
+#include <ParallelTools/parallel.h>
+#include <ParallelTools/sort.hpp>
+#include <ParallelTools/reducer.h>
+#include <ParallelTools/concurrent_hash_map.hpp>
 
 #ifdef __APPLE__
 #  define COMMON_DIGEST_FOR_OPENSSL
@@ -188,10 +187,10 @@ static void merge_leaf_nodes(Context<E> &ctx) {
   static Counter non_eligible("icf_non_eligibles");
   static Counter leaf("icf_leaf_nodes");
 
-  tbb::concurrent_unordered_map<InputSection<E> *, InputSection<E> *,
+  ParallelTools::concurrent_hash_map<InputSection<E> *, InputSection<E> *,
                                 LeafHasher<E>, LeafEq<E>> map;
 
-  tbb::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
     for (std::unique_ptr<InputSection<E>> &isec : ctx.objs[i]->sections) {
       if (!isec || !isec->is_alive)
         continue;
@@ -204,9 +203,9 @@ static void merge_leaf_nodes(Context<E> &ctx) {
       if (is_leaf(ctx, *isec)) {
         leaf++;
         isec->icf_leaf = true;
-        auto [it, inserted] = map.insert({isec.get(), isec.get()});
-        if (!inserted && isec->get_priority() < it->second->get_priority())
-          it->second = isec.get();
+        auto [inserted, it] = map.insert(isec.get(), isec.get());
+        if (!inserted && isec->get_priority() < (*it)->get_priority())
+          *it = isec.get();
       } else {
         eligible++;
         isec->icf_eligible = true;
@@ -214,12 +213,12 @@ static void merge_leaf_nodes(Context<E> &ctx) {
     }
   });
 
-  tbb::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
     for (std::unique_ptr<InputSection<E>> &isec : ctx.objs[i]->sections) {
       if (isec && isec->is_alive && isec->icf_leaf) {
-        auto it = map.find(isec.get());
-        assert(it != map.end());
-        isec->leader = it->second;
+        auto it = map.value(isec.get(), nullptr);
+        assert(it !=nullptr);
+        isec->leader = it;
       }
     }
   });
@@ -314,7 +313,7 @@ static std::vector<InputSection<E> *> gather_sections(Context<E> &ctx) {
   // Count the number of input sections for each input file.
   std::vector<i64> num_sections(ctx.objs.size());
 
-  tbb::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
     for (std::unique_ptr<InputSection<E>> &isec : ctx.objs[i]->sections)
       if (isec && isec->is_alive && isec->icf_eligible)
         num_sections[i]++;
@@ -328,14 +327,14 @@ static std::vector<InputSection<E> *> gather_sections(Context<E> &ctx) {
     section_indices.back() + num_sections.back());
 
   // Fill `sections` contents.
-  tbb::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)ctx.objs.size(), [&](i64 i) {
     i64 idx = section_indices[i];
     for (std::unique_ptr<InputSection<E>> &isec : ctx.objs[i]->sections)
       if (isec && isec->is_alive && isec->icf_eligible)
         sections[idx++] = isec.get();
   });
 
-  tbb::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
     sections[i]->icf_idx = i;
   });
 
@@ -348,7 +347,7 @@ compute_digests(Context<E> &ctx, std::span<InputSection<E> *> sections) {
   Timer t(ctx, "compute_digests");
 
   std::vector<Digest> digests(sections.size());
-  tbb::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
     digests[i] = compute_digest(ctx, *sections[i]);
   });
   return digests;
@@ -364,7 +363,7 @@ static void gather_edges(Context<E> &ctx,
   std::vector<i64> num_edges(sections.size());
   edge_indices.resize(sections.size());
 
-  tbb::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
     InputSection<E> &isec = *sections[i];
     assert(isec.icf_eligible);
     i64 frag_idx = 0;
@@ -387,7 +386,7 @@ static void gather_edges(Context<E> &ctx,
 
   edges.resize(edge_indices.back() + num_edges.back());
 
-  tbb::parallel_for((i64)0, (i64)num_edges.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)num_edges.size(), [&](i64 i) {
     InputSection<E> &isec = *sections[i];
     i64 frag_idx = 0;
     i64 idx = edge_indices[i];
@@ -408,14 +407,14 @@ static void gather_edges(Context<E> &ctx,
 template <typename E>
 static i64 propagate(std::span<std::vector<Digest>> digests,
                      std::span<u32> edges, std::span<u32> edge_indices,
-                     bool &slot, tbb::affinity_partitioner &ap) {
+                     bool &slot) {
   static Counter round("icf_round");
   round++;
 
   i64 num_digests = digests[0].size();
-  tbb::enumerable_thread_specific<i64> changed;
+  ParallelTools::Reducer_sum<i64> changed;
 
-  tbb::parallel_for((i64)0, num_digests, [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, num_digests, [&](i64 i) {
     if (digests[slot][i] == digests[!slot][i])
       return;
 
@@ -432,51 +431,49 @@ static i64 propagate(std::span<std::vector<Digest>> digests,
     digests[!slot][i] = digest_final(sha);
 
     if (digests[slot][i] != digests[!slot][i])
-      changed.local()++;
-  }, ap);
+      changed.inc();
+  });
 
   slot = !slot;
-  return changed.combine(std::plus());
+  return changed.get();
 }
 
 template <typename E>
-static i64 count_num_classes(std::span<Digest> digests,
-                             tbb::affinity_partitioner &ap) {
+static i64 count_num_classes(std::span<Digest> digests) {
   std::vector<Digest> vec(digests.begin(), digests.end());
-  tbb::parallel_sort(vec);
+  ParallelTools::sort(vec.begin(), vec.end());
 
-  tbb::enumerable_thread_specific<i64> num_classes;
-  tbb::parallel_for((i64)0, (i64)vec.size() - 1, [&](i64 i) {
+  ParallelTools::Reducer_sum<i64> num_classes;
+  ParallelTools::parallel_for((i64)0, (i64)vec.size() - 1, [&](i64 i) {
     if (vec[i] != vec[i + 1])
-      num_classes.local()++;
-  }, ap);
-  return num_classes.combine(std::plus());
+      num_classes.inc();
+  });
+  return num_classes.get();
 }
 
 template <typename E>
 static void print_icf_sections(Context<E> &ctx) {
-  tbb::concurrent_vector<InputSection<E> *> leaders;
-  tbb::concurrent_unordered_multimap<InputSection<E> *, InputSection<E> *> map;
+  ParallelTools::Reducer_Vector<InputSection<E> *> leaders;
+  ParallelTools::concurrent_hash_multimap<InputSection<E> *, InputSection<E> *> map;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (std::unique_ptr<InputSection<E>> &isec : file->sections) {
       if (isec && isec->is_alive && isec->leader) {
         if (isec.get() == isec->leader)
           leaders.push_back(isec.get());
         else
-          map.insert({isec->leader, isec.get()});
+          map.insert(isec->leader, isec.get());
       }
     }
   });
 
-  tbb::parallel_sort(leaders.begin(), leaders.end(),
-                     [&](InputSection<E> *a, InputSection<E> *b) {
+  auto sorted_leaders = leaders.get_sorted([&](InputSection<E> *a, InputSection<E> *b) {
                        return a->get_priority() < b->get_priority();
                      });
 
   i64 saved_bytes = 0;
 
-  for (InputSection<E> *leader : leaders) {
+  for (InputSection<E> *leader : sorted_leaders) {
     auto [begin, end] = map.equal_range(leader);
     if (begin == end)
       continue;
@@ -518,11 +515,10 @@ void icf_sections(Context<E> &ctx) {
   // Execute the propagation rounds until convergence is obtained.
   {
     Timer t(ctx, "propagate");
-    tbb::affinity_partitioner ap;
 
     i64 num_changed = -1;
     for (;;) {
-      i64 n = propagate<E>(digests, edges, edge_indices, slot, ap);
+      i64 n = propagate<E>(digests, edges, edge_indices, slot);
       if (n == num_changed)
         break;
       num_changed = n;
@@ -531,9 +527,9 @@ void icf_sections(Context<E> &ctx) {
     i64 num_classes = -1;
     for (;;) {
       for (i64 i = 0; i < 10; i++)
-        propagate<E>(digests, edges, edge_indices, slot, ap);
+        propagate<E>(digests, edges, edge_indices, slot);
 
-      i64 n = count_num_classes<E>(digests[slot], ap);
+      i64 n = count_num_classes<E>(digests[slot]);
       if (n == num_classes)
         break;
       num_classes = n;
@@ -544,20 +540,20 @@ void icf_sections(Context<E> &ctx) {
   {
     Timer t(ctx, "group");
 
-    auto *map = new tbb::concurrent_unordered_map<Digest, InputSection<E> *>;
+    auto *map = new ParallelTools::concurrent_hash_map<Digest, InputSection<E> *>;
     std::span<Digest> digest = digests[slot];
 
-    tbb::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
+    ParallelTools::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
       InputSection<E> *isec = sections[i];
-      auto [it, inserted] = map->insert({digest[i], isec});
-      if (!inserted && isec->get_priority() < it->second->get_priority())
-        it->second = isec;
+      auto [inserted, it] = map->insert(digest[i], isec);
+      if (!inserted && isec->get_priority() < (*it)->get_priority())
+        *it = isec;
     });
 
-    tbb::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
-      auto it = map->find(digest[i]);
-      assert(it != map->end());
-      sections[i]->leader = it->second;
+    ParallelTools::parallel_for((i64)0, (i64)sections.size(), [&](i64 i) {
+      auto it = map->value(digest[i], nullptr);
+      assert(it !=nullptr);
+      sections[i]->leader = it;
     });
 
     // Since free'ing the map is slow, postpone it.
@@ -570,7 +566,7 @@ void icf_sections(Context<E> &ctx) {
   // Re-assign input sections to symbols.
   {
     Timer t(ctx, "reassign");
-    tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
       for (Symbol<E> *sym : file->symbols) {
         if (sym->file != file)
           continue;

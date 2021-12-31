@@ -4,14 +4,14 @@
 #include <iomanip>
 #include <ios>
 #include <sstream>
-#include <tbb/parallel_for_each.h>
 #include <unordered_map>
+#include <ParallelTools/concurrent_hash_map.hpp>
 
 namespace mold::elf {
 
 template <typename E>
 using Map =
-  tbb::concurrent_hash_map<InputSection<E> *, std::vector<Symbol<E> *>>;
+  ParallelTools::concurrent_hash_map<InputSection<E> *, std::vector<Symbol<E> *>>;
 
 template <typename E>
 static std::unique_ptr<std::ofstream> open_output_file(Context<E> &ctx) {
@@ -26,25 +26,18 @@ template <typename E>
 static Map<E> get_map(Context<E> &ctx) {
   Map<E> map;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (Symbol<E> *sym : file->symbols) {
       if (sym->file == file && sym->input_section &&
           sym->get_type() != STT_SECTION) {
         assert(file == &sym->input_section->file);
 
-        typename Map<E>::accessor acc;
-        map.insert(acc, {sym->input_section, {}});
-        acc->second.push_back(sym);
+        auto p = map.insert(sym->input_section, {});
+        p.second->push_back(sym);
       }
     }
   });
-
-  tbb::parallel_for(map.range(), [](const typename Map<E>::range_type &range) {
-    for (auto it = range.begin(); it != range.end(); it++) {
-      std::vector<Symbol<E> *> &vec = it->second;
-      sort(vec, [](Symbol<E> *a, Symbol<E> *b) { return a->value < b->value; });
-    }
-  });
+  map.for_each([](InputSection<E> * key, std::vector<Symbol<E> *> &value) {sort(value, [](Symbol<E> *a, Symbol<E> *b) { return a->value < b->value; });});
   return map;
 }
 
@@ -76,7 +69,7 @@ void print_map(Context<E> &ctx) {
     std::span<InputSection<E> *> members = ((OutputSection<E> *)osec)->members;
     std::vector<std::string> bufs(members.size());
 
-    tbb::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
+    ParallelTools::parallel_for((i64)0, (i64)members.size(), [&](i64 i) {
       InputSection<E> *mem = members[i];
       std::ostringstream ss;
       opt_demangle = ctx.arg.demangle;
@@ -86,12 +79,10 @@ void print_map(Context<E> &ctx) {
          << std::setw(6) << (u64)mem->shdr.sh_addralign
          << "         " << *mem << "\n";
 
-      typename Map<E>::const_accessor acc;
-      if (map.find(acc, mem))
-        for (Symbol<E> *sym : acc->second)
-          ss << std::setw(16) << sym->get_addr(ctx)
-             << "          0     0                 "
-             << *sym << "\n";
+      for (Symbol<E> *sym : map.value(mem, {}))
+        ss << std::setw(16) << sym->get_addr(ctx)
+            << "          0     0                 "
+            << *sym << "\n";
 
       bufs[i] = std::move(ss.str());
     });

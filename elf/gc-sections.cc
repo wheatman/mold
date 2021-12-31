@@ -4,8 +4,8 @@
 
 #include "mold.h"
 
-#include <tbb/concurrent_vector.h>
-#include <tbb/parallel_for_each.h>
+#include <ParallelTools/parallel.h>
+#include <ParallelTools/reducer.h>
 
 namespace mold::elf {
 
@@ -27,7 +27,7 @@ static bool mark_section(InputSection<E> *isec) {
 
 template <typename E>
 static void visit(Context<E> &ctx, InputSection<E> *isec,
-                  tbb::feeder<InputSection<E> *> &feeder, i64 depth) {
+                   i64 depth) {
   assert(isec->is_visited);
 
   // A relocation can refer either a section fragment (i.e. a piece of
@@ -44,7 +44,7 @@ static void visit(Context<E> &ctx, InputSection<E> *isec,
     for (ElfRel<E> &rel : fde.get_rels().subspan(1))
       if (Symbol<E> *sym = isec->file.symbols[rel.r_sym])
         if (mark_section(sym->input_section))
-          feeder.add(sym->input_section);
+          cilk_spawn visit(ctx, sym->input_section, depth);
 
   for (ElfRel<E> &rel : isec->get_rels(ctx)) {
     Symbol<E> &sym = *isec->file.symbols[rel.r_sym];
@@ -62,17 +62,18 @@ static void visit(Context<E> &ctx, InputSection<E> *isec,
     // Mark a section alive. For better performacne, we don't call
     // `feeder.add` too often.
     if (depth < 3)
-      visit(ctx, sym.input_section, feeder, depth + 1);
+      visit(ctx, sym.input_section, depth + 1);
     else
-      feeder.add(sym.input_section);
+      cilk_spawn visit(ctx, sym.input_section, depth + 1);
   }
+  cilk_sync;
 }
 
 template <typename E>
-static tbb::concurrent_vector<InputSection<E> *>
+static ParallelTools::Reducer_Vector<InputSection<E> *>
 collect_root_set(Context<E> &ctx) {
   Timer t(ctx, "collect_root_set");
-  tbb::concurrent_vector<InputSection<E> *> rootset;
+  ParallelTools::Reducer_Vector<InputSection<E> *> rootset;
 
   auto enqueue_section = [&](InputSection<E> *isec) {
     if (mark_section(isec))
@@ -89,7 +90,7 @@ collect_root_set(Context<E> &ctx) {
   };
 
   // Add sections that are not subject to garbage collection.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (std::unique_ptr<InputSection<E>> &isec : file->sections) {
       if (!isec || !isec->is_alive)
         continue;
@@ -108,7 +109,7 @@ collect_root_set(Context<E> &ctx) {
   });
 
   // Add sections containing exported symbols
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (Symbol<E> *sym : file->symbols)
       if (sym->file == file && sym->is_exported)
         enqueue_symbol(sym);
@@ -126,7 +127,7 @@ collect_root_set(Context<E> &ctx) {
   // .eh_frame consists of variable-length records called CIE and FDE
   // records, and they are a unit of inclusion or exclusion.
   // We just keep all CIEs and everything that are referenced by them.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (CieRecord<E> &cie : file->cies)
       for (ElfRel<E> &rel : cie.get_rels())
         enqueue_symbol(file->symbols[rel.r_sym]);
@@ -138,12 +139,11 @@ collect_root_set(Context<E> &ctx) {
 // Mark all reachable sections
 template <typename E>
 static void mark(Context<E> &ctx,
-                 tbb::concurrent_vector<InputSection<E> *> &rootset) {
+                 ParallelTools::Reducer_Vector<InputSection<E> *> &rootset) {
   Timer t(ctx, "mark");
 
-  tbb::parallel_for_each(rootset, [&](InputSection<E> *isec,
-                                    tbb::feeder<InputSection<E> *> &feeder) {
-    visit(ctx, isec, feeder, 0);
+  rootset.for_each( [&](InputSection<E> *isec) {
+    visit(ctx, isec, 0);
   });
 }
 
@@ -153,7 +153,7 @@ static void sweep(Context<E> &ctx) {
   Timer t(ctx, "sweep");
   static Counter counter("garbage_sections");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (std::unique_ptr<InputSection<E>> &isec : file->sections) {
       if (isec && isec->is_alive && !isec->is_visited) {
         if (ctx.arg.print_gc_sections)
@@ -171,7 +171,7 @@ template <typename E>
 static void mark_nonalloc_fragments(Context<E> &ctx) {
   Timer t(ctx, "mark_nonalloc_fragments");
 
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
     for (SectionFragment<E> *frag : file->fragments)
       if (!(frag->output_section.shdr.sh_flags & SHF_ALLOC))
         frag->is_alive.store(true, std::memory_order_relaxed);
@@ -184,7 +184,7 @@ void gc_sections(Context<E> &ctx) {
 
   mark_nonalloc_fragments(ctx);
 
-  tbb::concurrent_vector<InputSection<E> *> rootset = collect_root_set(ctx);
+  ParallelTools::Reducer_Vector<InputSection<E> *> rootset = collect_root_set(ctx);
   mark(ctx, rootset);
   sweep(ctx);
 }

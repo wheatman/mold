@@ -77,13 +77,9 @@ ifneq ($(wildcard /opt/homebrew/.),)
   LIBS += -L/opt/homebrew/lib
 endif
 
-ifdef SYSTEM_TBB
-  LIBS += -ltbb
-else
-  TBB_LIB = out/tbb/libs/libtbb.a
-  LIBS += $(TBB_LIB)
-  CPPFLAGS += -Ithird-party/tbb/include
-endif
+
+CPPFLAGS += -Ithird-party/ParallelTools -DCILK=1
+CPPFLAGS += -fopencilk
 
 ifneq ($(OS), Darwin)
   LIBS += -lcrypto
@@ -91,7 +87,7 @@ endif
 
 all: mold mold-wrapper.so
 
-mold: $(OBJS) $(MIMALLOC_LIB) $(TBB_LIB)
+mold: $(OBJS) $(MIMALLOC_LIB) 
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJS) -o $@ $(LIBS)
 	ln -sf mold ld
 	ln -sf mold ld64.mold
@@ -115,11 +111,6 @@ $(MIMALLOC_LIB):
 	(cd out/mimalloc; CFLAGS=-DMI_USE_ENVIRON=0 cmake -G'Unix Makefiles' ../../third-party/mimalloc)
 	$(MAKE) -C out/mimalloc mimalloc-static
 
-$(TBB_LIB):
-	mkdir -p out/tbb
-	(cd out/tbb; cmake -G'Unix Makefiles' -DBUILD_SHARED_LIBS=OFF -DTBB_TEST=OFF -DCMAKE_CXX_FLAGS=-D__TBB_DYNAMIC_LOAD_ENABLED=0 -DTBB_STRICT=OFF ../../third-party/tbb)
-	$(MAKE) -C out/tbb tbb
-	(cd out/tbb; ln -sf *_relwithdebinfo libs)
 
 ifeq ($(OS), Darwin)
 test tests check: all

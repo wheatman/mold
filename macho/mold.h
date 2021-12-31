@@ -6,8 +6,9 @@
 #include <map>
 #include <memory>
 #include <span>
-#include <tbb/concurrent_hash_map.h>
-#include <tbb/spin_mutex.h>
+#include <ParallelTools/concurrent_hash_map.hpp>
+#include <ParallelTools/reducer.h>
+#include <mutex>
 #include <unordered_map>
 #include <variant>
 
@@ -220,7 +221,7 @@ struct Symbol {
   i32 got_idx = -1;
   i32 tlv_idx = -1;
 
-  tbb::spin_mutex mu;
+  std::mutex mu;
 
   std::atomic_uint8_t flags = 0;
 
@@ -795,18 +796,18 @@ struct Context {
 
   bool has_error = false;
 
-  tbb::concurrent_hash_map<std::string_view, Symbol<E>> symbol_map;
+  ParallelTools::concurrent_hash_map<std::string_view, Symbol<E>> symbol_map;
 
   std::unique_ptr<OutputFile<E>> output_file;
   u8 *buf;
 
-  tbb::concurrent_vector<std::unique_ptr<ObjectFile<E>>> obj_pool;
-  tbb::concurrent_vector<std::unique_ptr<DylibFile<E>>> dylib_pool;
-  tbb::concurrent_vector<std::unique_ptr<u8[]>> string_pool;
-  tbb::concurrent_vector<std::unique_ptr<MappedFile<Context<E>>>> mf_pool;
+  ParallelTools::Reducer_Vector<std::unique_ptr<ObjectFile<E>>> obj_pool;
+  ParallelTools::Reducer_Vector<std::unique_ptr<DylibFile<E>>> dylib_pool;
+  ParallelTools::Reducer_Vector<std::unique_ptr<u8[]>> string_pool;
+  ParallelTools::Reducer_Vector<std::unique_ptr<MappedFile<Context<E>>>> mf_pool;
   std::vector<std::unique_ptr<OutputSection<E>>> osec_pool;
 
-  tbb::concurrent_vector<std::unique_ptr<TimerRecord>> timer_records;
+  ParallelTools::Reducer_Vector<std::unique_ptr<TimerRecord>> timer_records;
 
   std::vector<ObjectFile<E> *> objs;
   std::vector<DylibFile<E> *> dylibs;
@@ -886,9 +887,8 @@ u64 Symbol<E>::get_tlv_addr(Context<E> &ctx) const {
 
 template <typename E>
 inline Symbol<E> *intern(Context<E> &ctx, std::string_view name) {
-  typename decltype(ctx.symbol_map)::const_accessor acc;
-  ctx.symbol_map.insert(acc, {name, Symbol<E>(name)});
-  return (Symbol<E> *)(&acc->second);
+  auto p = ctx.symbol_map.insert(name, Symbol<E>(name));
+  return (Symbol<E> *)(p.second);
 }
 
 template <typename E>

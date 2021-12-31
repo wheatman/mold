@@ -1,4 +1,6 @@
 #include "mold.h"
+#include "ParallelTools/parallel.h"
+#include "ParallelTools/reducer.h"
 
 #include <functional>
 #include <iomanip>
@@ -9,7 +11,7 @@
 namespace mold {
 
 i64 Counter::get_value() {
-  return values.combine(std::plus());
+  return values.get();
 }
 
 void Counter::print() {
@@ -66,16 +68,17 @@ static void print_rec(TimerRecord &rec, i64 indent) {
          std::string(indent * 2, ' ').c_str(),
          rec.name.c_str());
 
-  sort(rec.children, [](TimerRecord *a, TimerRecord *b) {
+  const auto children = rec.children.get_sorted([](TimerRecord *a, TimerRecord *b) {
     return a->start < b->start;
   });
 
-  for (TimerRecord *child : rec.children)
+  for (TimerRecord *child : children)
     print_rec(*child, indent + 1);
 }
 
 void print_timer_records(
-    tbb::concurrent_vector<std::unique_ptr<TimerRecord>> &records) {
+    ParallelTools::Reducer_Vector<std::unique_ptr<TimerRecord>> &records_) {
+  auto records = records_.get();
   for (i64 i = records.size() - 1; i >= 0; i--)
     records[i]->stop();
 

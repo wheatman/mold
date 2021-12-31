@@ -14,7 +14,7 @@
 
 #include "mold.h"
 
-#include <tbb/parallel_for_each.h>
+#include <ParallelTools/parallel.h>
 #include <zlib.h>
 
 namespace mold {
@@ -69,7 +69,7 @@ ZlibCompressor::ZlibCompressor(std::string_view input) {
   shards.resize(inputs.size());
 
   // Compress each shard
-  tbb::parallel_for((i64)0, (i64)inputs.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)inputs.size(), [&](i64 i) {
     adlers[i] = adler32(1, (u8 *)inputs[i].data(), inputs[i].size());
     shards[i] = do_compress(inputs[i]);
   });
@@ -81,7 +81,7 @@ ZlibCompressor::ZlibCompressor(std::string_view input) {
 }
 
 i64 ZlibCompressor::size() const {
-  i64 size = 2;    // +2 for header
+  i64 size = 2; // +2 for header
   for (const std::vector<u8> &shard : shards)
     size += shard.size();
   return size + 6; // +6 for trailer and checksum
@@ -98,7 +98,7 @@ void ZlibCompressor::write_to(u8 *buf) {
   for (i64 i = 1; i < shards.size(); i++)
     offsets[i] = offsets[i - 1] + shards[i - 1].size();
 
-  tbb::parallel_for((i64)0, (i64)shards.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)shards.size(), [&](i64 i) {
     memcpy(&buf[offsets[i]], shards[i].data(), shards[i].size());
   });
 
@@ -117,7 +117,7 @@ GzipCompressor::GzipCompressor(std::string_view input) {
   shards.resize(inputs.size());
 
   // Compress each shard
-  tbb::parallel_for((i64)0, (i64)inputs.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)inputs.size(), [&](i64 i) {
     crc[i] = crc32(0, (u8 *)inputs[i].data(), inputs[i].size());
     shards[i] = do_compress(inputs[i]);
   });
@@ -131,7 +131,7 @@ GzipCompressor::GzipCompressor(std::string_view input) {
 }
 
 i64 GzipCompressor::size() const {
-  i64 size = 10;    // +10 for header
+  i64 size = 10; // +10 for header
   for (const std::vector<u8> &shard : shards)
     size += shard.size();
   return size + 10; // +10 for trailer and checksum
@@ -151,7 +151,7 @@ void GzipCompressor::write_to(u8 *buf) {
   for (i64 i = 1; i < shards.size(); i++)
     offsets[i] = offsets[i - 1] + shards[i - 1].size();
 
-  tbb::parallel_for((i64)0, (i64)shards.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)shards.size(), [&](i64 i) {
     memcpy(&buf[offsets[i]], shards[i].data(), shards[i].size());
   });
 

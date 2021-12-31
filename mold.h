@@ -1,6 +1,7 @@
 #pragma once
 
 #include "byteorder.h"
+#include <ParallelTools/parallel.h>
 
 #include <atomic>
 #include <cassert>
@@ -16,8 +17,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
+#include <memory>
+#include <ParallelTools/reducer.h>
 #include <unistd.h>
 #include <vector>
 
@@ -240,10 +241,10 @@ inline i64 uleb_size(u64 val) {
 
 template <typename C>
 std::string_view save_string(C &ctx, const std::string &str) {
-  u8 *buf = new u8[str.size() + 1];
+  auto buf = new u8[str.size() + 1];
   memcpy(buf, str.data(), str.size());
   buf[str.size()] = '\0';
-  ctx.string_pool.push_back(std::unique_ptr<u8[]>(buf));
+  ctx.string_pool.push_back(buf);
   return {(char *)buf, str.size()};
 }
 
@@ -476,13 +477,13 @@ public:
 
   Counter &operator++(int) {
     if (enabled)
-      values.local()++;
+      values.inc();
     return *this;
   }
 
   Counter &operator+=(int delta) {
     if (enabled)
-      values.local() += delta;
+      values.add(delta);
     return *this;
   }
 
@@ -494,7 +495,7 @@ private:
   i64 get_value();
 
   std::string_view name;
-  tbb::enumerable_thread_specific<i64> values;
+  ParallelTools::Reducer_sum<i64> values;
 
   static inline std::vector<Counter *> instances;
 };
@@ -507,7 +508,7 @@ struct TimerRecord {
 
   std::string name;
   TimerRecord *parent;
-  tbb::concurrent_vector<TimerRecord *> children;
+  ParallelTools::Reducer_Vector<TimerRecord *> children;
   i64 start;
   i64 end;
   i64 user;
@@ -516,14 +517,14 @@ struct TimerRecord {
 };
 
 void
-print_timer_records(tbb::concurrent_vector<std::unique_ptr<TimerRecord>> &);
+print_timer_records(ParallelTools::Reducer_Vector<std::unique_ptr<TimerRecord>> &);
 
 template <typename C>
 class Timer {
 public:
   Timer(C &ctx, std::string name, Timer *parent = nullptr) {
     record = new TimerRecord(name, parent ? parent->record : nullptr);
-    ctx.timer_records.push_back(std::unique_ptr<TimerRecord>(record));
+    ctx.timer_records.push_back(record);
   }
 
   ~Timer() {
@@ -605,7 +606,7 @@ MappedFile<C> *MappedFile<C>::open(C &ctx, std::string path) {
   MappedFile *mf = new MappedFile;
   mf->name = path;
 
-  ctx.mf_pool.push_back(std::unique_ptr<MappedFile>(mf));
+  ctx.mf_pool.push_back(mf);
 
   if (path.starts_with('/') && !ctx.arg.chroot.empty())
     path = ctx.arg.chroot + "/" + path_clean(path);
@@ -652,7 +653,7 @@ MappedFile<C>::slice(C &ctx, std::string name, u64 start, u64 size) {
   mf->size = size;
   mf->parent = this;
 
-  ctx.mf_pool.push_back(std::unique_ptr<MappedFile>(mf));
+  ctx.mf_pool.push_back(mf);
   return mf;
 }
 

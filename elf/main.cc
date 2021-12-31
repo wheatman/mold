@@ -9,8 +9,8 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <tbb/global_control.h>
-#include <tbb/parallel_for_each.h>
+// #include <tbb/global_control.h>
+#include <ParallelTools/parallel.h>
 #include <unistd.h>
 #include <unordered_set>
 
@@ -36,7 +36,9 @@ static ObjectFile<E> *new_object_file(Context<E> &ctx, MappedFile<Context<E>> *m
   bool in_lib = ctx.in_lib || (!archive_name.empty() && !ctx.whole_archive);
   ObjectFile<E> *file = ObjectFile<E>::create(ctx, mf, archive_name, in_lib);
   file->priority = ctx.file_priority++;
-  ctx.tg.run([file, &ctx]() { file->parse(ctx); });
+  //TODO(wheatman) should be spawned
+  file->parse(ctx);
+  // ctx.tg.run([file, &ctx]() { file->parse(ctx); });
   if (ctx.arg.trace)
     SyncOut(ctx) << "trace: " << *file;
   return file;
@@ -46,7 +48,9 @@ template <typename E>
 static SharedFile<E> *new_shared_file(Context<E> &ctx, MappedFile<Context<E>> *mf) {
   SharedFile<E> *file = SharedFile<E>::create(ctx, mf);
   file->priority = ctx.file_priority++;
-  ctx.tg.run([file, &ctx]() { file->parse(ctx); });
+  //TODO(wheatman) should be spawned
+  file->parse(ctx);
+  // ctx.tg.run([file, &ctx]() { file->parse(ctx); });
   if (ctx.arg.trace)
     SyncOut(ctx) << "trace: " << *file;
   return file;
@@ -195,7 +199,7 @@ static void read_input_files(Context<E> &ctx, std::span<std::string_view> args) 
   if (ctx.objs.empty())
     Fatal(ctx) << "no input files";
 
-  ctx.tg.wait();
+  // ctx.tg.wait();
 }
 
 template <typename E>
@@ -294,8 +298,9 @@ static void show_stats(Context<E> &ctx) {
   }
 
   static Counter num_bytes("total_input_bytes");
-  for (std::unique_ptr<MappedFile<Context<E>>> &mf : ctx.mf_pool)
+  ctx.mf_pool.serial_for_each([&](std::unique_ptr<MappedFile<Context<E>>> &mf) {
     num_bytes += mf->size;
+  });
 
   static Counter num_input_sections("input_sections");
   for (ObjectFile<E> *file : ctx.objs)
@@ -310,9 +315,10 @@ static void show_stats(Context<E> &ctx) {
 
 static i64 get_default_thread_count() {
   // mold doesn't scale above 32 threads.
-  int n = tbb::global_control::active_value(
-    tbb::global_control::max_allowed_parallelism);
-  return std::min(n, 32);
+  return ParallelTools::getWorkers();
+  // int n = tbb::global_control::active_value(
+  //   tbb::global_control::max_allowed_parallelism);
+  // return std::min(n, 32);
 }
 
 template <typename E>
@@ -353,8 +359,8 @@ static int elf_main(int argc, char **argv) {
   i64 thread_count = ctx.arg.thread_count;
   if (thread_count == 0)
     thread_count = get_default_thread_count();
-  tbb::global_control tbb_cont(tbb::global_control::max_allowed_parallelism,
-                               thread_count);
+  // tbb::global_control tbb_cont(tbb::global_control::max_allowed_parallelism,
+  //                              thread_count);
 
   install_signal_handler();
 
@@ -398,7 +404,7 @@ static int elf_main(int argc, char **argv) {
 
   {
     Timer t(ctx, "register_section_pieces");
-    tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
       file->register_section_pieces(ctx);
     });
   }
@@ -529,7 +535,7 @@ static int elf_main(int argc, char **argv) {
   // Compute .symtab and .strtab sizes for each file.
   {
     Timer t(ctx, "compute_symtab");
-    tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
       file->compute_symtab(ctx);
     });
   }
@@ -607,7 +613,7 @@ static int elf_main(int argc, char **argv) {
   {
     Timer t(ctx, "copy_buf");
 
-    tbb::parallel_for_each(ctx.chunks, [&](Chunk<E> *chunk) {
+    ParallelTools::parallel_for_each(ctx.chunks, [&](Chunk<E> *chunk) {
       std::string name(chunk->name);
       if (name.empty())
         name = "(header)";
@@ -657,8 +663,8 @@ static int elf_main(int argc, char **argv) {
   if (ctx.arg.quick_exit)
     _exit(0);
 
-  for (std::function<void()> &fn : ctx.on_exit)
-    fn();
+  ctx.on_exit.serial_for_each([&](std::function<void()> &fn) { fn(); });
+
   return 0;
 }
 

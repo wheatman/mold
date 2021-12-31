@@ -3,9 +3,7 @@
 #include <functional>
 #include <map>
 #include <regex>
-#include <tbb/parallel_for_each.h>
-#include <tbb/parallel_scan.h>
-#include <tbb/partitioner.h>
+#include <ParallelTools/parallel.h>
 #include <unordered_set>
 
 namespace mold::elf {
@@ -78,7 +76,7 @@ void resolve_symbols(Context<E> &ctx) {
   Timer t(ctx, "resolve_obj_symbols");
 
   // Register object symbols
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     if (file->is_in_lib)
       file->resolve_lazy_symbols(ctx);
     else
@@ -86,7 +84,7 @@ void resolve_symbols(Context<E> &ctx) {
   });
 
   // Register DSO symbols
-  tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
     file->resolve_dso_symbols(ctx);
   });
 
@@ -106,14 +104,15 @@ void resolve_symbols(Context<E> &ctx) {
   for (std::string_view name : ctx.arg.require_defined)
     load(name);
 
-  tbb::parallel_for_each(live_objs,
-                         [&](ObjectFile<E> *file,
-                             tbb::feeder<ObjectFile<E> *> &feeder) {
-    file->mark_live_objects(ctx, [&](ObjectFile<E> *obj) { feeder.add(obj); });
+  ParallelTools::parallel_for_each_spawn(live_objs,
+                         [&](ObjectFile<E> *file) {
+                               std::vector<ObjectFile<E> *> feeder;
+    file->mark_live_objects(ctx, [&](ObjectFile<E> *obj) { feeder.push_back(obj); });
+    return feeder;
   });
 
   // Remove symbols of eliminated objects.
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
     if (!file->is_alive)
       for (Symbol<E> *sym : file->get_global_syms())
         if (sym->file == file)
@@ -124,7 +123,7 @@ void resolve_symbols(Context<E> &ctx) {
   erase(ctx.objs, [](InputFile<E> *file) { return !file->is_alive; });
 
   // Mark live DSOs
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
     for (i64 i = file->first_global; i < file->elf_syms.size(); i++) {
       const ElfSym<E> &esym = file->elf_syms[i];
       Symbol<E> &sym = *file->symbols[i];
@@ -140,17 +139,18 @@ void resolve_symbols(Context<E> &ctx) {
   std::vector<SharedFile<E> *> live_dsos = ctx.dsos;
   erase(live_dsos, [](SharedFile<E> *file) { return !file->is_alive; });
 
-  tbb::parallel_for_each(live_dsos,
-                         [&](SharedFile<E> *file,
-                             tbb::feeder<SharedFile<E> *> &feeder) {
+  ParallelTools::parallel_for_each_spawn(live_dsos,
+                         [&](SharedFile<E> *file) {
+    std::vector<SharedFile<E> *> feeder;
     for (Symbol<E> *sym : file->globals)
       if (sym->file && sym->file != file && sym->file->is_dso &&
           !sym->file->is_alive.exchange(true))
-        feeder.add(file);
+        feeder.push_back(file);
+    return feeder;
   });
 
   // Remove symbols of unreferenced DSOs.
-  tbb::parallel_for_each(ctx.dsos, [](SharedFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.dsos, [](SharedFile<E> *file) {
     if (!file->is_alive)
       for (Symbol<E> *sym : file->symbols)
         if (sym->file == file)
@@ -161,7 +161,7 @@ void resolve_symbols(Context<E> &ctx) {
   erase(ctx.dsos, [](InputFile<E> *file) { return !file->is_alive; });
 
   // Register common symbols
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     file->resolve_common_symbols(ctx);
   });
 
@@ -174,11 +174,11 @@ template <typename E>
 void eliminate_comdats(Context<E> &ctx) {
   Timer t(ctx, "eliminate_comdats");
 
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
     file->resolve_comdat_groups();
   });
 
-  tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
     file->eliminate_duplicate_comdat_groups();
   });
 }
@@ -187,7 +187,7 @@ template <typename E>
 void convert_common_symbols(Context<E> &ctx) {
   Timer t(ctx, "convert_common_symbols");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     file->convert_common_symbols(ctx);
   });
 }
@@ -217,7 +217,7 @@ void compute_merged_section_sizes(Context<E> &ctx) {
 
   // Mark section fragments referenced by live objects.
   if (!ctx.arg.gc_sections) {
-    tbb::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.objs, [](ObjectFile<E> *file) {
       for (SectionFragment<E> *frag : file->fragments)
         frag->is_alive.store(true, std::memory_order_relaxed);
     });
@@ -231,8 +231,7 @@ void compute_merged_section_sizes(Context<E> &ctx) {
     add_comment_string(ctx, "mold command line: " + get_cmdline_args(ctx));
 
   Timer t2(ctx, "MergedSection assign_offsets");
-  tbb::parallel_for_each(ctx.merged_sections,
-                         [&](std::unique_ptr<MergedSection<E>> &sec) {
+  ctx.merged_sections.for_each([&](std::unique_ptr<MergedSection<E>> &sec) {
     sec->assign_offsets(ctx);
   });
 }
@@ -272,7 +271,7 @@ void bin_sections(Context<E> &ctx) {
   for (i64 i = 0; i < groups.size(); i++)
     groups[i].resize(num_osec);
 
-  tbb::parallel_for((i64)0, (i64)slices.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)slices.size(), [&](i64 i) {
     for (ObjectFile<E> *file : slices[i])
       for (std::unique_ptr<InputSection<E>> &isec : file->sections)
         if (isec && isec->is_alive)
@@ -285,7 +284,7 @@ void bin_sections(Context<E> &ctx) {
     for (i64 i = 0; i < group.size(); i++)
       sizes[i] += group[i].size();
 
-  tbb::parallel_for((i64)0, num_osec, [&](i64 j) {
+  ParallelTools::parallel_for((i64)0, num_osec, [&](i64 j) {
     ctx.output_sections[j]->members.reserve(sizes[j]);
     for (i64 i = 0; i < groups.size(); i++)
       append(ctx.output_sections[j]->members, groups[i][j]);
@@ -297,7 +296,7 @@ void bin_sections(Context<E> &ctx) {
 template <typename E>
 ObjectFile<E> *create_internal_file(Context<E> &ctx) {
   ObjectFile<E> *obj = new ObjectFile<E>;
-  ctx.obj_pool.push_back(std::unique_ptr<ObjectFile<E>>(obj));
+  ctx.obj_pool.push_back(obj);
 
   // Create linker-synthesized symbols.
   auto *esyms = new std::vector<ElfSym<E>>(1);
@@ -375,7 +374,7 @@ template <typename E>
 void check_duplicate_symbols(Context<E> &ctx) {
   Timer t(ctx, "check_dup_syms");
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (i64 i = file->first_global; i < file->elf_syms.size(); i++) {
       const ElfSym<E> &esym = file->elf_syms[i];
       Symbol<E> &sym = *file->symbols[i];
@@ -424,9 +423,11 @@ std::vector<Chunk<E> *> collect_output_sections(Context<E> &ctx) {
   for (std::unique_ptr<OutputSection<E>> &osec : ctx.output_sections)
     if (!osec->members.empty())
       vec.push_back(osec.get());
-  for (std::unique_ptr<MergedSection<E>> &osec : ctx.merged_sections)
-    if (osec->shdr.sh_size)
-      vec.push_back(osec.get());
+  ctx.merged_sections.serial_for_each(
+      [&](std::unique_ptr<MergedSection<E>> &osec) {
+        if (osec->shdr.sh_size)
+          vec.push_back(osec.get());
+      });
 
   // Sections are added to the section lists in an arbitrary order because
   // they are created in parallel.
@@ -442,7 +443,7 @@ template <typename E>
 void compute_section_sizes(Context<E> &ctx) {
   Timer t(ctx, "compute_section_sizes");
 
-  tbb::parallel_for_each(ctx.output_sections,
+  ParallelTools::parallel_for_each(ctx.output_sections,
                          [&](std::unique_ptr<OutputSection<E>> &osec) {
     if (osec->members.empty())
       return;
@@ -451,27 +452,35 @@ void compute_section_sizes(Context<E> &ctx) {
       i64 offset;
       i64 align;
     };
+    T sum = T{0, 1};
+    //TODO(wheatman) parallel prefix sum
+    for (InputSection<E> *isec : osec->members) {
+          sum.offset = align_to(sum.offset, isec->shdr.sh_addralign);
+          isec->offset = sum.offset;
+          sum.offset += isec->shdr.sh_size;
+          sum.align = std::max<i64>(sum.align, isec->shdr.sh_addralign);
+    }
 
-    T sum = tbb::parallel_scan(
-      tbb::blocked_range<i64>(0, osec->members.size(), 10000),
-      T{0, 1},
-      [&](const tbb::blocked_range<i64> &r, T sum, bool is_final) {
-        for (i64 i = r.begin(); i < r.end(); i++) {
-          InputSection<E> &isec = *osec->members[i];
-          sum.offset = align_to(sum.offset, isec.shdr.sh_addralign);
-          if (is_final)
-            isec.offset = sum.offset;
-          sum.offset += isec.shdr.sh_size;
-          sum.align = std::max<i64>(sum.align, isec.shdr.sh_addralign);
-        }
-        return sum;
-      },
-      [](T lhs, T rhs) {
-        i64 offset = align_to(lhs.offset, rhs.align) + rhs.offset;
-        i64 align = std::max(lhs.align, rhs.align);
-        return T{offset, align};
-      },
-      tbb::simple_partitioner());
+    // T sum = tbb::parallel_scan(
+    //   tbb::blocked_range<i64>(0, osec->members.size(), 10000),
+    //   T{0, 1},
+    //   [&](const tbb::blocked_range<i64> &r, T sum, bool is_final) {
+    //     for (i64 i = r.begin(); i < r.end(); i++) {
+    //       InputSection<E> &isec = *osec->members[i];
+    //       sum.offset = align_to(sum.offset, isec.shdr.sh_addralign);
+    //       if (is_final)
+    //         isec.offset = sum.offset;
+    //       sum.offset += isec.shdr.sh_size;
+    //       sum.align = std::max<i64>(sum.align, isec.shdr.sh_addralign);
+    //     }
+    //     return sum;
+    //   },
+    //   [](T lhs, T rhs) {
+    //     i64 offset = align_to(lhs.offset, rhs.align) + rhs.offset;
+    //     i64 align = std::max(lhs.align, rhs.align);
+    //     return T{offset, align};
+    //   },
+    //   tbb::simple_partitioner());
 
     osec->shdr.sh_size = sum.offset;
     osec->shdr.sh_addralign = sum.align;
@@ -481,7 +490,7 @@ void compute_section_sizes(Context<E> &ctx) {
 template <typename E>
 void claim_unresolved_symbols(Context<E> &ctx) {
   Timer t(ctx, "claim_unresolved_symbols");
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     file->claim_unresolved_symbols(ctx);
   });
 }
@@ -491,7 +500,7 @@ void scan_rels(Context<E> &ctx) {
   Timer t(ctx, "scan_rels");
 
   // Scan relocations to find dynamic symbols.
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     file->scan_relocations(ctx);
   });
 
@@ -499,7 +508,7 @@ void scan_rels(Context<E> &ctx) {
   ctx.checkpoint();
 
   // Add symbol aliases for COPYREL.
-  tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
     for (Symbol<E> *sym : file->symbols)
       if (sym->file == file && (sym->flags & NEEDS_COPYREL))
         for (Symbol<E> *alias : file->find_aliases(sym))
@@ -513,7 +522,7 @@ void scan_rels(Context<E> &ctx) {
 
   std::vector<std::vector<Symbol<E> *>> vec(files.size());
 
-  tbb::parallel_for((i64)0, (i64)files.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)files.size(), [&](i64 i) {
     for (Symbol<E> *sym : files[i]->symbols) {
       if (!files[i]->is_dso && (sym->is_imported || sym->is_exported))
         sym->flags |= NEEDS_DYNSYM;
@@ -602,7 +611,7 @@ void apply_version_script(Context<E> &ctx) {
 
     std::regex re = glob_to_regex(elem.pattern);
 
-    tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
       for (Symbol<E> *sym : file->get_global_syms()) {
         if (sym->file == file) {
           std::string_view name = sym->name();
@@ -627,7 +636,7 @@ void parse_symbol_version(Context<E> &ctx) {
   for (i64 i = 0; i < ctx.arg.version_definitions.size(); i++)
     verdefs[ctx.arg.version_definitions[i]] = i + VER_NDX_LAST_RESERVED + 1;
 
-  tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+  ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
     for (i64 i = 0; i < file->symbols.size() - file->first_global; i++) {
       if (!file->symvers[i])
         continue;
@@ -664,7 +673,7 @@ void compute_import_export(Context<E> &ctx) {
 
   // Export symbols referenced by DSOs.
   if (!ctx.arg.shared) {
-    tbb::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.dsos, [&](SharedFile<E> *file) {
       for (Symbol<E> *sym : file->globals) {
         if (sym->file && !sym->file->is_dso && sym->visibility != STV_HIDDEN) {
           std::lock_guard lock(sym->mu);
@@ -676,7 +685,7 @@ void compute_import_export(Context<E> &ctx) {
 
   // Global symbols are exported from DSO by default.
   if (ctx.arg.shared || ctx.arg.export_dynamic) {
-    tbb::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
+    ParallelTools::parallel_for_each(ctx.objs, [&](ObjectFile<E> *file) {
       for (Symbol<E> *sym : file->get_global_syms()) {
         if (sym->file != file)
           continue;
@@ -943,7 +952,7 @@ template <typename E>
 void compress_debug_sections(Context<E> &ctx) {
   Timer t(ctx, "compress_debug_sections");
 
-  tbb::parallel_for((i64)0, (i64)ctx.chunks.size(), [&](i64 i) {
+  ParallelTools::parallel_for((i64)0, (i64)ctx.chunks.size(), [&](i64 i) {
     Chunk<E> &chunk = *ctx.chunks[i];
 
     if ((chunk.shdr.sh_flags & SHF_ALLOC) || chunk.shdr.sh_size == 0 ||
@@ -957,7 +966,7 @@ void compress_debug_sections(Context<E> &ctx) {
       comp = new GnuCompressedSection<E>(ctx, chunk);
     assert(comp);
 
-    ctx.output_chunks.push_back(std::unique_ptr<Chunk<E>>(comp));
+    ctx.output_chunks.push_back(comp);
     ctx.chunks[i] = comp;
   });
 
