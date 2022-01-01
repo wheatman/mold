@@ -100,15 +100,15 @@ inline void parallel_for(size_t start, size_t end, F f, size_t chunksize = 0) {
 template <typename F, typename RAC>
 inline void parallel_for_each(RAC &container, F f, size_t chunksize = 0) {
   for (size_t i = 0; i < container.size(); i++) {
-    auto vec = f(container[i]);
-    parallel_for_each_spawn(vec, f, chunksize);
+    f(container[i]);
   }
 }
 
 template <typename F, typename RAC>
 inline void parallel_for_each_spawn(RAC &container, F f, size_t chunksize = 0) {
   for (size_t i = 0; i < container.size(); i++) {
-    f(container[i]);
+    auto vec = f(container[i]);
+    parallel_for_each_spawn(vec, f, chunksize);
   }
 }
 
