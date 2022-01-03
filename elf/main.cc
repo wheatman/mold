@@ -37,7 +37,7 @@ static ObjectFile<E> *new_object_file(Context<E> &ctx, MappedFile<Context<E>> *m
   ObjectFile<E> *file = ObjectFile<E>::create(ctx, mf, archive_name, in_lib);
   file->priority = ctx.file_priority++;
   //TODO(wheatman) should be spawned
-  file->parse(ctx);
+  // file->parse(ctx);
   // ctx.tg.run([file, &ctx]() { file->parse(ctx); });
   if (ctx.arg.trace)
     SyncOut(ctx) << "trace: " << *file;
@@ -49,7 +49,7 @@ static SharedFile<E> *new_shared_file(Context<E> &ctx, MappedFile<Context<E>> *m
   SharedFile<E> *file = SharedFile<E>::create(ctx, mf);
   file->priority = ctx.file_priority++;
   //TODO(wheatman) should be spawned
-  file->parse(ctx);
+  //file->parse(ctx);
   // ctx.tg.run([file, &ctx]() { file->parse(ctx); });
   if (ctx.arg.trace)
     SyncOut(ctx) << "trace: " << *file;
@@ -196,6 +196,12 @@ static void read_input_files(Context<E> &ctx, std::span<std::string_view> args) 
     }
   }
 
+  ParallelTools::parallel_for_each(ctx.dsos,
+                                   [&](SharedFile<E> *f) { f->parse(ctx); });
+
+  ParallelTools::parallel_for_each(ctx.objs,
+                                   [&](ObjectFile<E> *f) { f->parse(ctx); });
+
   if (ctx.objs.empty())
     Fatal(ctx) << "no input files";
 
@@ -234,6 +240,7 @@ static bool reload_input_files(Context<E> &ctx) {
     MappedFile<Context<E>> *mf =
       MappedFile<Context<E>>::must_open(ctx, file->mf->name);
     objs.push_back(new_object_file(ctx, mf, file->mf->name));
+    objs.back()->parse(ctx);
   }
 
   // Reload updated .so files
@@ -247,6 +254,7 @@ static bool reload_input_files(Context<E> &ctx) {
       MappedFile<Context<E>> *mf =
         MappedFile<Context<E>>::must_open(ctx, file->mf->name);
       dsos.push_back(new_shared_file(ctx, mf));
+      dsos.back()->parse(ctx);
     }
   }
 
