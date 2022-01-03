@@ -196,11 +196,12 @@ static void read_input_files(Context<E> &ctx, std::span<std::string_view> args) 
     }
   }
 
-  ParallelTools::parallel_for_each(ctx.dsos,
-                                   [&](SharedFile<E> *f) { f->parse(ctx); });
+  cilk_spawn ParallelTools::parallel_for_each(
+      ctx.dsos, [&](SharedFile<E> *f) { f->parse(ctx); }, 16);
 
-  ParallelTools::parallel_for_each(ctx.objs,
-                                   [&](ObjectFile<E> *f) { f->parse(ctx); });
+  ParallelTools::parallel_for_each(
+      ctx.objs, [&](ObjectFile<E> *f) { f->parse(ctx); }, 16);
+  cilk_sync;
 
   if (ctx.objs.empty())
     Fatal(ctx) << "no input files";
@@ -628,7 +629,7 @@ static int elf_main(int argc, char **argv) {
       Timer t2(ctx, name, &t);
 
       chunk->copy_buf(ctx);
-    });
+    }, 32);
 
     ctx.checkpoint();
   }
