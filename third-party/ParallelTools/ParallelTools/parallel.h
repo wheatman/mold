@@ -8,7 +8,8 @@ namespace ParallelTools {
 #include <cilk/cilk_api.h>
 
 template <typename F>
-inline void parallel_for(size_t start, size_t end, F f, size_t chunksize = 0) {
+inline void parallel_for(size_t start, size_t end, F f,
+                         const size_t chunksize = 0) {
   if (chunksize == 0) {
     cilk_for(size_t i = start; i < end; i++) f(i);
   } else if ((end - start) <= chunksize) {
@@ -29,7 +30,7 @@ inline void parallel_for(size_t start, size_t end, F f, size_t chunksize = 0) {
 }
 
 template <typename F, typename RAC>
-inline void parallel_for_each(RAC &container, F f, size_t chunksize = 0) {
+inline void parallel_for_each(RAC &container, F f, const size_t chunksize = 0) {
   if (chunksize == 0) {
     cilk_for(size_t i = 0; i < container.size(); i++) f(container[i]);
   } else if (container.size() <= chunksize) {
@@ -42,8 +43,8 @@ inline void parallel_for_each(RAC &container, F f, size_t chunksize = 0) {
       if (local_end > container.size()) {
         local_end = container.size();
       }
-      for (size_t j = i; i < local_end; j++) {
-        f(container[i]);
+      for (size_t j = i; j < local_end; j++) {
+        f(container[j]);
       }
     }
   }
@@ -53,7 +54,8 @@ inline void parallel_for_each(RAC &container, F f, size_t chunksize = 0) {
 // each element in the vector is run with the same function as the original
 // vector
 template <typename F, typename RAC>
-inline void parallel_for_each_spawn(RAC &container, F f, size_t chunksize = 0) {
+inline void parallel_for_each_spawn(RAC &container, F f,
+                                    const size_t chunksize = 0) {
   if (chunksize == 0) {
     cilk_for(size_t i = 0; i < container.size(); i++) {
       auto vec = f(container[i]);
@@ -70,8 +72,8 @@ inline void parallel_for_each_spawn(RAC &container, F f, size_t chunksize = 0) {
       if (local_end > container.size()) {
         local_end = container.size();
       }
-      for (size_t j = i; i < local_end; j++) {
-        auto vec = f(container[i]);
+      for (size_t j = i; j < local_end; j++) {
+        auto vec = f(container[j]);
         cilk_spawn parallel_for_each_spawn(vec, f, chunksize);
       }
     }
@@ -91,21 +93,23 @@ inline void parallel_for_each_spawn(RAC &container, F f, size_t chunksize = 0) {
 #define cilk_sync
 
 template <typename F>
-inline void parallel_for(size_t start, size_t end, F f, size_t chunksize = 0) {
+inline void parallel_for(size_t start, size_t end, F f,
+                         const size_t chunksize = 0) {
   for (size_t i = start; i < end; i++) {
     f(i);
   }
 }
 
 template <typename F, typename RAC>
-inline void parallel_for_each(RAC &container, F f, size_t chunksize = 0) {
+inline void parallel_for_each(RAC &container, F f, const size_t chunksize = 0) {
   for (size_t i = 0; i < container.size(); i++) {
     f(container[i]);
   }
 }
 
 template <typename F, typename RAC>
-inline void parallel_for_each_spawn(RAC &container, F f, size_t chunksize = 0) {
+inline void parallel_for_each_spawn(RAC &container, F f,
+                                    const size_t chunksize = 0) {
   for (size_t i = 0; i < container.size(); i++) {
     auto vec = f(container[i]);
     parallel_for_each_spawn(vec, f, chunksize);
