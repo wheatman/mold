@@ -18,7 +18,7 @@ STRIP ?= strip
 OS ?= $(shell uname -s)
 
 # Used for both C and C++
-COMMON_FLAGS = -pthread -fPIE -fno-unwind-tables -fno-asynchronous-unwind-tables
+COMMON_FLAGS = -pthread -fPIE -fno-unwind-tables -fno-asynchronous-unwind-tables -g -fsanitize=cilk
 
 CFLAGS ?= -O2
 CFLAGS += $(COMMON_FLAGS)

@@ -19,6 +19,22 @@
 
 namespace mold::elf {
 
+  #ifdef __cilksan__
+#ifdef __cplusplus
+extern "C" {
+#endif
+void __csan_default_libhook(uint64_t call_id, uint64_t func_id, unsigned count);
+void __csan_realpath(uint64_t call_id, uint64_t func_id, unsigned count) {
+  __csan_default_libhook(call_id, func_id, count);
+}
+void __csan_readlink(uint64_t call_id, uint64_t func_id, unsigned count) {
+  __csan_default_libhook(call_id, func_id, count);
+}
+#ifdef __cplusplus
+}
+#endif
+#endif
+
 // Exiting from a program with large memory usage is slow --
 // it may take a few hundred milliseconds. To hide the latency,
 // we fork a child and let it do the actual linking work.

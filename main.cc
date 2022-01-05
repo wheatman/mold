@@ -6,6 +6,19 @@
 
 namespace mold {
 
+#ifdef __cilksan__
+#ifdef __cplusplus
+extern "C" {
+#endif
+void __csan_default_libhook(uint64_t call_id, uint64_t func_id, unsigned count);
+void __csan_unlink(uint64_t call_id, uint64_t func_id, unsigned count) {
+  __csan_default_libhook(call_id, func_id, count);
+}
+#ifdef __cplusplus
+}
+#endif
+#endif
+
 std::string_view errno_string() {
   static thread_local char buf[200];
   strerror_r(errno, buf, sizeof(buf));
